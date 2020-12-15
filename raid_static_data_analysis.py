@@ -727,7 +727,7 @@ def champ_abilities_and_multipliers(data):
             this_champ_move["book_effects"] = ", ".join(book_increase_descriptions)
             this_champ_move["book_dmg_mul"] = round(book_damage_multiplier, 2)
             this_champ_move["book_heal_mul"] = round(book_heal_multiplier, 2)
-            this_champ_move["book_shield_mul"] = round(book_heal_multiplier, 2)
+            this_champ_move["book_shield_mul"] = round(book_shield_multiplier, 2)
 
             # Make list of multipliers for condensed view
             multipliers = []
