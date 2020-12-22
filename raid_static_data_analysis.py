@@ -4,6 +4,18 @@ import numpy as np
 import pandas as pd
 import re
 
+STAT_GAIN_PER_LEVEL_BY_RANK = [
+    -1,
+    -1,  # I don't have estimates for champs other than rank 6 ones.
+    -1,  # I'm certain that the rates differ, though.
+    -1,
+    -1,
+    1.00903337867813  # Estimated. Would love to have closed form of this.
+]
+
+HP_DIVISOR = 26002616.5  # Estimated but close. In-game displayed values round to nearest 15.
+ATK_DEF_DIVISOR = 390039247.5  # Estimated but close. In-game displayed values round to nearest 1.
+
 DIFFICULTY_CODES = {
     "1": "Normal",
     "2": "Hard",
@@ -555,7 +567,7 @@ def champ_abilities_and_multipliers(data):
                                           "status_type", "status_duration", "cd_minus_duration",
                                           "effect_chance_booked", "effect_chance_unbooked",
                                           "target_type", "target_type_code",
-                                          "effect_type_desc", "effect_type_code", "effect_id",
+                                          "effect_type_desc", "effect_type_code", "condition", "effect_id",
                                           "skill_name_hidden", "skill_desc_hidden", "skill_id",
 
                                           "hp", "atk", "def", "spd", "cr_rate", "cr_dmg", "res", "acc",
@@ -609,9 +621,9 @@ def champ_abilities_and_multipliers(data):
         # print(f'{champ_name},{raw_hp},{raw_atk},{raw_def}')
 
         # Get base stats
-        champ_hp = raw_hp / 26004993.4368775  # Divisors here estimated using several dozen champs.
-        champ_atk = raw_atk / 390018709.167108  # Should be within 0.001% of actual value or so.
-        champ_def = raw_def / 390018709.167108  # Probably safe to round to the millions.
+        champ_hp = raw_hp / HP_DIVISOR  # Divisors here estimated using all legendaries' displayed values
+        champ_atk = raw_atk / ATK_DEF_DIVISOR  # as of 12-15-2020. In-game displayed values aren't always accurate.
+        champ_def = raw_def / ATK_DEF_DIVISOR  # E.G. displayed base HP rounds to multiple of 15.
         champ_spd = champ.get("BaseStats").get("Speed") / 4294967296.  # Note: divisor is 2^32
         champ_res = champ.get("BaseStats").get("Resistance") / 4294967296.
         champ_acc = champ.get("BaseStats").get("Accuracy") / 4294967296.
@@ -627,7 +639,7 @@ def champ_abilities_and_multipliers(data):
             "affinity": champ_affinity,
             "role": champ_type,
             "faction": champ_faction,
-            "hp": round(champ_hp),
+            "hp": round(champ_hp / 15) * 15,
             "atk": round(champ_atk),
             "def": round(champ_def),
             "spd": round(champ_spd),
@@ -642,7 +654,10 @@ def champ_abilities_and_multipliers(data):
             "hidden_name": champ_name_hidden,
             "champ_status": champ_status,
             "released": "Y" if champ_status == 40 else "N",
-            # "cr_heal": champ_cr_heal
+            # "cr_heal": champ_cr_heal,
+            # "raw_hp": raw_hp,
+            # "raw_atk": raw_atk,
+            # "raw_def": raw_def,
         }
 
         # Add row for champ to basic champ info DF
@@ -731,6 +746,10 @@ def champ_abilities_and_multipliers(data):
 
             # Make list of multipliers for condensed view
             multipliers = []
+
+            # Make cumulative damage for moves with multiple damaging effects
+            # TODO: this
+            move_total_damage = 0
 
             # Add a row for each effect
             for effect in skill_data.get("Effects", []):
@@ -827,9 +846,30 @@ def champ_abilities_and_multipliers(data):
                     if effect_kind in [5000, 6000]:
                         # do damage-y things
                         # 5000 included because bombs have multipliers
-                        formatted_formula_complete = f"({formatted_formula})" +\
-                                                     f"*{effect.get('Count', 1)}" +\
-                                                     f"*{round(book_damage_multiplier,2)}"
+
+                        if target_type_ind == 6 \
+                                and effect.get("TargetParams", {}).get("TargetType") == 6 \
+                                and effect.get("TargetParams", {}).get("Exclusive") == 1:
+                            # Count only the first hit for exclusive random hitters - each enemy can be hit only once
+                            # This solves the weirdness with Galkut and Archmage Hellmut having ridiculous damage vals
+                            formatted_formula_complete = f"({formatted_formula})" +\
+                                                         f"*{round(book_damage_multiplier,2)}"
+                        else:
+                            formatted_formula_complete = f"({formatted_formula})" +\
+                                                         f"*{effect.get('Count', 1)}" +\
+                                                         f"*{round(book_damage_multiplier,2)}"
+
+                        # Archmage Hellmut:
+                        # TargetParams has
+                        #   TargetType 6 (random enemies)
+                        #   Exclusion 2
+                        #   Exclusive 1
+                        #   FirstHitInSelected 0
+                        # Galkut does not have Exclusion 2, has FirstHitInSelected 1
+                        # This is because Archmage Hellmut's will hit all enemies but the initial skill target (if crit)
+                        # -> Exclusive means it doesn't hit an enemy twice
+                        # -> Exclusion indicates a target type that will not be hit by the random attack
+
                     elif effect_kind in [0, 1000]:
                         # do revive-y heal-y things
                         formatted_formula_complete = f"({formatted_formula})" +\
@@ -857,6 +897,8 @@ def champ_abilities_and_multipliers(data):
                         print(f"Could not parse multiplier formula: {formatted_formula}")
                         this_champ_effect['calculated_damage'] = None
 
+                this_champ_effect['condition'] = effect.get("Condition", None)
+
                 # Get info on the buff or debuff that is applied, if applicable
                 if effect.get("ApplyStatusEffectParams"):
                     for status in effect.get("ApplyStatusEffectParams").get("StatusEffectInfos"):
@@ -875,7 +917,7 @@ def champ_abilities_and_multipliers(data):
                 "affinity": champ_affinity,
                 "role": champ_type,
                 "faction": champ_faction,
-                "hp": round(champ_hp),
+                "hp": round(champ_hp / 15) * 15,
                 "atk": round(champ_atk),
                 "def": round(champ_def),
                 "spd": round(champ_spd),
