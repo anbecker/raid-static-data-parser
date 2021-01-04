@@ -207,7 +207,7 @@ STAT_TYPES = [
 
 AURA_AREAS = [
     "All Battles",
-    "UNKNOWN",
+    "Campaign",
     "Dungeons",
     "Arena",
     "UNKNOWN",
